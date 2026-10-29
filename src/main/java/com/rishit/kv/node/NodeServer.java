@@ -10,6 +10,7 @@ import java.io.IOException;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Logger;
 
 /**
@@ -20,6 +21,7 @@ import java.util.logging.Logger;
  * PUT    /kv/{key}   -> stores the request body as the value
  * DELETE /kv/{key}   -> 200 if deleted, 404 if the key did not exist
  * GET    /health     -> 200 "OK" while the node is running
+ * GET    /stats      -> JSON with key count and request counters
  * </pre>
  */
 public class NodeServer {
@@ -30,6 +32,12 @@ public class NodeServer {
     private final KeyValueStore store;
     private final HttpServer server;
     private final ExecutorService workers;
+    private final long startedAtMillis = System.currentTimeMillis();
+
+    // Updated by many request threads at once, so they must be atomic.
+    private final AtomicLong gets = new AtomicLong();
+    private final AtomicLong puts = new AtomicLong();
+    private final AtomicLong deletes = new AtomicLong();
 
     /**
      * @param threads number of worker threads. Without an executor, HttpServer
@@ -43,6 +51,7 @@ public class NodeServer {
         server.setExecutor(workers);
         server.createContext(KV_PREFIX, HttpUtils.withErrorHandling(this::handleKv));
         server.createContext("/health", HttpUtils.withErrorHandling(this::handleHealth));
+        server.createContext("/stats", HttpUtils.withErrorHandling(this::handleStats));
     }
 
     public void start() {
@@ -69,6 +78,7 @@ public class NodeServer {
 
         switch (exchange.getRequestMethod()) {
             case "GET" -> {
+                gets.incrementAndGet();
                 Optional<String> value = store.get(key);
                 if (value.isPresent()) {
                     sendText(exchange, 200, value.get());
@@ -77,11 +87,13 @@ public class NodeServer {
                 }
             }
             case "PUT" -> {
+                puts.incrementAndGet();
                 String value = HttpUtils.readBody(exchange);
                 store.put(key, value);
                 sendText(exchange, 200, "OK\n");
             }
             case "DELETE" -> {
+                deletes.incrementAndGet();
                 if (store.delete(key)) {
                     sendText(exchange, 200, "Deleted\n");
                 } else {
@@ -97,5 +109,15 @@ public class NodeServer {
 
     private void handleHealth(HttpExchange exchange) throws IOException {
         sendText(exchange, 200, "OK\n");
+    }
+
+    private void handleStats(HttpExchange exchange) throws IOException {
+        long uptimeSeconds = (System.currentTimeMillis() - startedAtMillis) / 1000;
+        String json = "{\"keys\":" + store.size()
+                + ",\"gets\":" + gets.get()
+                + ",\"puts\":" + puts.get()
+                + ",\"deletes\":" + deletes.get()
+                + ",\"uptimeSeconds\":" + uptimeSeconds + "}";
+        HttpUtils.sendJson(exchange, 200, json);
     }
 }

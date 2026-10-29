@@ -1,6 +1,7 @@
 package com.rishit.kv.node;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.rishit.kv.store.InMemoryKeyValueStore;
 import java.net.URI;
@@ -78,6 +79,23 @@ class NodeServerTest {
     @Test
     void healthReturnsOk() throws Exception {
         assertEquals(200, send("GET", "/health", null).statusCode());
+    }
+
+    @Test
+    void statsCountKeysAndRequests() throws Exception {
+        send("PUT", "/kv/a", "1");
+        send("PUT", "/kv/b", "2");
+        send("GET", "/kv/a", null);
+        send("DELETE", "/kv/b", null);
+
+        HttpResponse<String> response = send("GET", "/stats", null);
+        assertEquals(200, response.statusCode());
+        assertEquals("application/json", response.headers().firstValue("Content-Type").orElseThrow());
+        String json = response.body();
+        assertTrue(json.contains("\"keys\":1"), json);
+        assertTrue(json.contains("\"gets\":1"), json);
+        assertTrue(json.contains("\"puts\":2"), json);
+        assertTrue(json.contains("\"deletes\":1"), json);
     }
 
     @Test
