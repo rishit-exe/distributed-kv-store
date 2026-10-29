@@ -1,11 +1,14 @@
 package com.rishit.kv.router;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class ConsistentHashRingTest {
@@ -76,6 +79,25 @@ class ConsistentHashRingTest {
             }
             assertTrue(!newOwner.equals("node2"));
         }
+    }
+
+    @Test
+    void nodesForReturnsDistinctNodesStartingWithTheOwner() {
+        ConsistentHashRing ring = ringWith("node1", "node2", "node3");
+        for (int i = 0; i < 1_000; i++) {
+            String key = "key" + i;
+            List<String> replicas = ring.nodesFor(key, 2);
+
+            assertEquals(2, replicas.size());
+            assertEquals(ring.nodeFor(key), replicas.get(0));
+            assertNotEquals(replicas.get(0), replicas.get(1));
+        }
+    }
+
+    @Test
+    void nodesForNeverReturnsMoreThanTheNumberOfNodes() {
+        ConsistentHashRing ring = ringWith("node1", "node2");
+        assertEquals(Set.of("node1", "node2"), Set.copyOf(ring.nodesFor("key", 5)));
     }
 
     private static ConsistentHashRing ringWith(String... nodes) {
