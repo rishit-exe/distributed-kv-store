@@ -5,41 +5,35 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Decides which node owns a key and forwards the request to it.
- *
- * Placement is "hash(key) mod number of nodes". This is simple, but when a
- * node is added or removed almost every key maps to a different node.
+ * Decides which node owns a key (using the {@link ConsistentHashRing}) and
+ * forwards the request to it.
  */
 public class Coordinator {
 
-    private final List<String> nodes;
+    private final ConsistentHashRing ring;
     private final NodeClient client;
 
-    public Coordinator(List<String> nodes, NodeClient client) {
-        if (nodes.isEmpty()) {
+    public Coordinator(ConsistentHashRing ring, NodeClient client) {
+        if (ring.nodes().isEmpty()) {
             throw new IllegalArgumentException("At least one node is required");
         }
-        this.nodes = List.copyOf(nodes);
+        this.ring = ring;
         this.client = client;
     }
 
     public Optional<String> get(String key) throws IOException {
-        return client.get(nodeFor(key), key);
+        return client.get(ring.nodeFor(key), key);
     }
 
     public void put(String key, String value) throws IOException {
-        client.put(nodeFor(key), key, value);
+        client.put(ring.nodeFor(key), key, value);
     }
 
     public boolean delete(String key) throws IOException {
-        return client.delete(nodeFor(key), key);
+        return client.delete(ring.nodeFor(key), key);
     }
 
     public List<String> nodes() {
-        return nodes;
-    }
-
-    String nodeFor(String key) {
-        return nodes.get(Math.floorMod(key.hashCode(), nodes.size()));
+        return ring.nodes();
     }
 }
