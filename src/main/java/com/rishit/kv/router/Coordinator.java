@@ -1,7 +1,10 @@
 package com.rishit.kv.router;
 
 import java.io.IOException;
+import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.logging.Logger;
 
@@ -14,6 +17,9 @@ import java.util.logging.Logger;
  *       {@code writeQuorum} (W) of them confirm it.</li>
  *   <li>A read goes to the first replica that answers, so one node being down
  *       does not make its keys unreadable.</li>
+ *   <li>Nodes marked DOWN (see {@link HealthChecker}) are skipped instead of
+ *       waiting for them to time out. A failed request marks the node DOWN
+ *       right away.</li>
  * </ul>
  */
 public class Coordinator {
@@ -25,6 +31,7 @@ public class Coordinator {
     private final NodeClient client;
     private final int replicationFactor;
     private final int writeQuorum;
+    private final Map<String, ClusterNode> members = new LinkedHashMap<>();
 
     /**
      * Two clients writing the same key at the same time could reach replica A
@@ -50,33 +57,42 @@ public class Coordinator {
         this.client = client;
         this.replicationFactor = replicationFactor;
         this.writeQuorum = writeQuorum;
+        for (String address : ring.nodes()) {
+            members.put(address, new ClusterNode(address));
+        }
         for (int i = 0; i < LOCK_STRIPES; i++) {
             writeLocks[i] = new Object();
         }
     }
 
-    /** Returns the value from the first replica that answers. */
+    /** Returns the value from the first healthy replica that answers. */
     public Optional<String> get(String key) throws ClusterUnavailableException {
-        for (String node : replicasFor(key)) {
+        for (ClusterNode node : replicaNodes(key)) {
+            if (!node.isUp()) {
+                continue;
+            }
             try {
-                return client.get(node, key);
+                return client.get(node.address(), key);
             } catch (IOException e) {
-                LOG.warning("Read from " + node + " failed, trying next replica: " + e.getMessage());
+                node.markDown("read failed: " + e.getMessage());
             }
         }
         throw new ClusterUnavailableException("No replica of key '" + key + "' is reachable");
     }
 
-    /** Writes to every replica. Returns how many replicas confirmed the write. */
+    /** Writes to every healthy replica. Returns how many replicas confirmed the write. */
     public int put(String key, String value) throws ClusterUnavailableException {
         int acks = 0;
         synchronized (lockFor(key)) {
-            for (String node : replicasFor(key)) {
+            for (ClusterNode node : replicaNodes(key)) {
+                if (!node.isUp()) {
+                    continue;
+                }
                 try {
-                    client.put(node, key, value);
+                    client.put(node.address(), key, value);
                     acks++;
                 } catch (IOException e) {
-                    LOG.warning("Write to " + node + " failed: " + e.getMessage());
+                    node.markDown("write failed: " + e.getMessage());
                 }
             }
         }
@@ -84,17 +100,20 @@ public class Coordinator {
         return acks;
     }
 
-    /** Deletes from every replica. Returns true if any replica had the key. */
+    /** Deletes from every healthy replica. Returns true if any replica had the key. */
     public boolean delete(String key) throws ClusterUnavailableException {
         int acks = 0;
         boolean existed = false;
         synchronized (lockFor(key)) {
-            for (String node : replicasFor(key)) {
+            for (ClusterNode node : replicaNodes(key)) {
+                if (!node.isUp()) {
+                    continue;
+                }
                 try {
-                    existed |= client.delete(node, key);
+                    existed |= client.delete(node.address(), key);
                     acks++;
                 } catch (IOException e) {
-                    LOG.warning("Delete on " + node + " failed: " + e.getMessage());
+                    node.markDown("delete failed: " + e.getMessage());
                 }
             }
         }
@@ -110,12 +129,24 @@ public class Coordinator {
         return ring.nodes();
     }
 
+    public Collection<ClusterNode> members() {
+        return members.values();
+    }
+
+    public ClusterNode member(String address) {
+        return members.get(address);
+    }
+
     public int replicationFactor() {
         return replicationFactor;
     }
 
     public int writeQuorum() {
         return writeQuorum;
+    }
+
+    private List<ClusterNode> replicaNodes(String key) {
+        return replicasFor(key).stream().map(members::get).toList();
     }
 
     private Object lockFor(String key) {
