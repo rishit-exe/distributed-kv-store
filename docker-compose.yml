@@ -1,10 +1,11 @@
-# 3 storage nodes + 1 router.
+# 3 storage nodes + 1 router + monitoring dashboard.
 #   docker compose up --build -d
 #   curl -X PUT -d 'hello' localhost:8080/kv/greeting
+#   open http://localhost:3000    # dashboard
 #   docker compose stop node2     # simulate a node failure
 #   docker compose start node2    # node comes back and catches up
 #
-# Every service uses the same image; the command picks the role.
+# The nodes and the router use the same image; the command picks the role.
 
 x-kv-service: &kv-service
   build: .
@@ -48,6 +49,16 @@ services:
       - node1
       - node2
       - node3
+
+  dashboard:
+    build: ./dashboard
+    image: kv-dashboard:latest
+    environment:
+      ROUTER_URL: http://router:8080
+    ports:
+      - "3000:3000"
+    depends_on:
+      - router
 
 volumes:
   node1-data:

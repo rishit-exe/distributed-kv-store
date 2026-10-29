@@ -46,7 +46,7 @@ class TestCluster implements AutoCloseable {
         NodeClient client = new NodeClient(Duration.ofMillis(500));
         coordinator = new Coordinator(ring, client, replicationFactor, writeQuorum);
         healthChecker = new HealthChecker(coordinator, client, FAILURE_THRESHOLD);
-        router = new RouterServer(0, coordinator, 8);
+        router = new RouterServer(0, coordinator, client, 8);
         router.start();
     }
 

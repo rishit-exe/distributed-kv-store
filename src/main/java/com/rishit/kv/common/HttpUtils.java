@@ -71,6 +71,10 @@ public final class HttpUtils {
         send(exchange, status, body, "text/plain; charset=utf-8");
     }
 
+    public static void sendJson(HttpExchange exchange, int status, String json) throws IOException {
+        send(exchange, status, json, "application/json");
+    }
+
     private static void send(HttpExchange exchange, int status, String body, String contentType)
             throws IOException {
         byte[] bytes = body.getBytes(UTF_8);
