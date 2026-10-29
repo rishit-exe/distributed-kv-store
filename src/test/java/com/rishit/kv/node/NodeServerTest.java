@@ -7,6 +7,9 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -22,7 +25,7 @@ class NodeServerTest {
 
     @BeforeEach
     void setUp() throws Exception {
-        server = new NodeServer(0, new InMemoryKeyValueStore()); // port 0 = pick any free port
+        server = new NodeServer(0, new InMemoryKeyValueStore(), 4); // port 0 = pick any free port
         server.start();
         baseUrl = "http://localhost:" + server.getPort();
     }
@@ -75,6 +78,25 @@ class NodeServerTest {
     @Test
     void healthReturnsOk() throws Exception {
         assertEquals(200, send("GET", "/health", null).statusCode());
+    }
+
+    @Test
+    void handlesManyConcurrentRequests() throws Exception {
+        int requests = 200;
+        List<CompletableFuture<HttpResponse<String>>> futures = new ArrayList<>();
+        for (int i = 0; i < requests; i++) {
+            HttpRequest request = HttpRequest.newBuilder(URI.create(baseUrl + "/kv/key" + i))
+                    .PUT(HttpRequest.BodyPublishers.ofString("value" + i))
+                    .build();
+            futures.add(client.sendAsync(request, HttpResponse.BodyHandlers.ofString()));
+        }
+        for (CompletableFuture<HttpResponse<String>> future : futures) {
+            assertEquals(200, future.get().statusCode());
+        }
+
+        for (int i = 0; i < requests; i += 37) {
+            assertEquals("value" + i, send("GET", "/kv/key" + i, null).body());
+        }
     }
 
     private HttpResponse<String> send(String method, String path, String body) throws Exception {
