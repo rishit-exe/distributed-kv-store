@@ -1,5 +1,6 @@
 package com.rishit.kv;
 
+import com.rishit.kv.bench.Benchmark;
 import com.rishit.kv.common.Env;
 import com.rishit.kv.node.NodeServer;
 import com.rishit.kv.router.ConsistentHashRing;
@@ -20,11 +21,12 @@ import java.util.List;
  * <pre>
  * java -jar distributed-kv-store.jar node     # storage node
  * java -jar distributed-kv-store.jar router   # routes client requests to nodes
+ * java -jar distributed-kv-store.jar bench    # load generator, see Benchmark
  * </pre>
  */
 public final class Main {
 
-    private static final String USAGE = "Usage: java -jar distributed-kv-store.jar <node|router>";
+    private static final String USAGE = "Usage: java -jar distributed-kv-store.jar <node|router|bench>";
 
     static {
         // One-line log format: "2026-10-30 12:00:00 INFO Node listening on port 8080"
@@ -34,11 +36,12 @@ public final class Main {
     private Main() {
     }
 
-    public static void main(String[] args) throws IOException {
+    public static void main(String[] args) throws Exception {
         String mode = args.length > 0 ? args[0] : "node";
         switch (mode) {
             case "node" -> startNode();
             case "router" -> startRouter();
+            case "bench" -> Benchmark.run(Arrays.copyOfRange(args, 1, args.length));
             default -> {
                 System.err.println("Unknown mode: " + mode);
                 System.err.println(USAGE);
