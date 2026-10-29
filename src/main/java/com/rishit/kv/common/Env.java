@@ -14,6 +14,11 @@ public final class Env {
         return (value == null || value.isBlank()) ? defaultValue : value.trim();
     }
 
+    public static boolean getBoolean(String name, boolean defaultValue) {
+        String value = get(name, null);
+        return value == null ? defaultValue : Boolean.parseBoolean(value);
+    }
+
     public static int getInt(String name, int defaultValue) {
         String value = get(name, null);
         if (value == null) {
