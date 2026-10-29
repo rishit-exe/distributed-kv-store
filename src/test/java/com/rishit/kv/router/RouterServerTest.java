@@ -30,16 +30,16 @@ class RouterServerTest {
 
     @BeforeEach
     void setUp() throws Exception {
-        List<String> addresses = new ArrayList<>();
+        ConsistentHashRing ring = new ConsistentHashRing(100);
         for (int i = 0; i < 3; i++) {
             InMemoryKeyValueStore store = new InMemoryKeyValueStore();
             NodeServer node = new NodeServer(0, store, 4);
             node.start();
             stores.add(store);
             nodeServers.add(node);
-            addresses.add("localhost:" + node.getPort());
+            ring.addNode("localhost:" + node.getPort());
         }
-        Coordinator coordinator = new Coordinator(addresses, new NodeClient(Duration.ofMillis(500)));
+        Coordinator coordinator = new Coordinator(ring, new NodeClient(Duration.ofMillis(500)));
         router = new RouterServer(0, coordinator, 8);
         router.start();
         routerUrl = "http://localhost:" + router.getPort();

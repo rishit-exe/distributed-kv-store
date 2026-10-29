@@ -2,6 +2,7 @@ package com.rishit.kv;
 
 import com.rishit.kv.common.Env;
 import com.rishit.kv.node.NodeServer;
+import com.rishit.kv.router.ConsistentHashRing;
 import com.rishit.kv.router.Coordinator;
 import com.rishit.kv.router.NodeClient;
 import com.rishit.kv.router.RouterServer;
@@ -70,7 +71,10 @@ public final class Main {
         List<String> nodes = parseNodes(Env.get("NODES", "localhost:8081,localhost:8082,localhost:8083"));
         Duration timeout = Duration.ofMillis(Env.getInt("REQUEST_TIMEOUT_MS", 1000));
 
-        Coordinator coordinator = new Coordinator(nodes, new NodeClient(timeout));
+        ConsistentHashRing ring = new ConsistentHashRing(Env.getInt("VIRTUAL_NODES", 100));
+        nodes.forEach(ring::addNode);
+
+        Coordinator coordinator = new Coordinator(ring, new NodeClient(timeout));
         RouterServer server = new RouterServer(port, coordinator, threads);
         Runtime.getRuntime().addShutdownHook(new Thread(server::stop));
         server.start();
