@@ -76,7 +76,7 @@ public class Coordinator {
             try {
                 return client.get(node.address(), key);
             } catch (IOException e) {
-                node.markDown("read failed: " + e.getMessage());
+                node.markDown("read failed: " + describe(e));
             }
         }
         throw new ClusterUnavailableException("No replica of key '" + key + "' is reachable");
@@ -109,7 +109,7 @@ public class Coordinator {
                 send(node.address(), hint);
                 node.hintReplayed();
             } catch (IOException e) {
-                node.markDown("hint replay failed: " + e.getMessage());
+                node.markDown("hint replay failed: " + describe(e));
                 return;
             }
         }
@@ -151,7 +151,7 @@ public class Coordinator {
                     existed |= send(node.address(), write);
                     acks++;
                 } catch (IOException e) {
-                    node.markDownAndQueue(write, "write failed: " + e.getMessage());
+                    node.markDownAndQueue(write, "write failed: " + describe(e));
                 }
             }
         }
@@ -186,6 +186,11 @@ public class Coordinator {
             throw new ClusterUnavailableException(
                     "Only " + acks + " of " + writeQuorum + " required replicas confirmed the write");
         }
+    }
+
+    /** Some exceptions (e.g. ConnectException) have no message, so fall back to the type. */
+    private static String describe(IOException e) {
+        return e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
     }
 
     private record WriteResult(int acks, boolean existed) {
