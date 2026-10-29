@@ -4,9 +4,11 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
+import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.InetSocketAddress;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Pattern;
@@ -16,6 +18,14 @@ import java.util.regex.Pattern;
  * validating keys).
  */
 public final class HttpUtils {
+
+    static {
+        // The JDK HttpServer leaves Nagle's algorithm on. Combined with delayed ACKs
+        // this added ~40 ms to many requests going through the router. TCP_NODELAY
+        // sends small responses right away. Must be set before the first HttpServer
+        // is created, which is why servers are created through createServer().
+        System.setProperty("sun.net.httpserver.nodelay", "true");
+    }
 
     private static final Logger LOG = Logger.getLogger(HttpUtils.class.getName());
 
@@ -29,6 +39,11 @@ public final class HttpUtils {
     private static final Pattern VALID_KEY = Pattern.compile("[A-Za-z0-9._:-]{1,256}");
 
     private HttpUtils() {
+    }
+
+    /** Creates an HttpServer bound to the port, with TCP_NODELAY enabled (see static block). */
+    public static HttpServer createServer(int port) throws IOException {
+        return HttpServer.create(new InetSocketAddress(port), 0);
     }
 
     public static boolean isValidKey(String key) {
