@@ -19,11 +19,23 @@ import java.util.logging.Logger;
 public class Coordinator {
 
     private static final Logger LOG = Logger.getLogger(Coordinator.class.getName());
+    private static final int LOCK_STRIPES = 64;
 
     private final ConsistentHashRing ring;
     private final NodeClient client;
     private final int replicationFactor;
     private final int writeQuorum;
+
+    /**
+     * Two clients writing the same key at the same time could reach replica A
+     * in the order (x, y) and replica B in the order (y, x), leaving the replicas
+     * with different values forever. Holding a lock for the key while writing to
+     * all replicas makes every replica see writes to that key in the same order.
+     *
+     * One lock per key would need unbounded memory, so keys share 64 locks
+     * ("lock striping"). Writes to different stripes still run in parallel.
+     */
+    private final Object[] writeLocks = new Object[LOCK_STRIPES];
 
     public Coordinator(ConsistentHashRing ring, NodeClient client, int replicationFactor, int writeQuorum) {
         int nodeCount = ring.nodes().size();
@@ -38,6 +50,9 @@ public class Coordinator {
         this.client = client;
         this.replicationFactor = replicationFactor;
         this.writeQuorum = writeQuorum;
+        for (int i = 0; i < LOCK_STRIPES; i++) {
+            writeLocks[i] = new Object();
+        }
     }
 
     /** Returns the value from the first replica that answers. */
@@ -55,12 +70,14 @@ public class Coordinator {
     /** Writes to every replica. Returns how many replicas confirmed the write. */
     public int put(String key, String value) throws ClusterUnavailableException {
         int acks = 0;
-        for (String node : replicasFor(key)) {
-            try {
-                client.put(node, key, value);
-                acks++;
-            } catch (IOException e) {
-                LOG.warning("Write to " + node + " failed: " + e.getMessage());
+        synchronized (lockFor(key)) {
+            for (String node : replicasFor(key)) {
+                try {
+                    client.put(node, key, value);
+                    acks++;
+                } catch (IOException e) {
+                    LOG.warning("Write to " + node + " failed: " + e.getMessage());
+                }
             }
         }
         requireQuorum(acks);
@@ -71,12 +88,14 @@ public class Coordinator {
     public boolean delete(String key) throws ClusterUnavailableException {
         int acks = 0;
         boolean existed = false;
-        for (String node : replicasFor(key)) {
-            try {
-                existed |= client.delete(node, key);
-                acks++;
-            } catch (IOException e) {
-                LOG.warning("Delete on " + node + " failed: " + e.getMessage());
+        synchronized (lockFor(key)) {
+            for (String node : replicasFor(key)) {
+                try {
+                    existed |= client.delete(node, key);
+                    acks++;
+                } catch (IOException e) {
+                    LOG.warning("Delete on " + node + " failed: " + e.getMessage());
+                }
             }
         }
         requireQuorum(acks);
@@ -97,6 +116,10 @@ public class Coordinator {
 
     public int writeQuorum() {
         return writeQuorum;
+    }
+
+    private Object lockFor(String key) {
+        return writeLocks[Math.floorMod(key.hashCode(), LOCK_STRIPES)];
     }
 
     private void requireQuorum(int acks) throws ClusterUnavailableException {

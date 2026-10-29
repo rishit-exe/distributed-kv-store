@@ -5,8 +5,13 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.net.http.HttpResponse;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import org.junit.jupiter.api.Test;
 
 /** 3 nodes, every key stored on 2 of them. */
@@ -76,6 +81,41 @@ class ReplicationTest {
 
             for (String address : cluster.addresses()) {
                 assertFalse(cluster.store(address).get("user1").isPresent());
+            }
+        }
+    }
+
+    @Test
+    void concurrentWritesToSameKeysLeaveReplicasIdentical() throws Exception {
+        int threads = 8;
+        int keys = 20;
+        try (TestCluster cluster = new TestCluster(3, 2, 1)) {
+            ExecutorService pool = Executors.newFixedThreadPool(threads);
+            CountDownLatch start = new CountDownLatch(1);
+            List<Future<?>> futures = new ArrayList<>();
+            for (int t = 0; t < threads; t++) {
+                int threadId = t;
+                futures.add(pool.submit(() -> {
+                    start.await();
+                    for (int round = 0; round < 20; round++) {
+                        for (int k = 0; k < keys; k++) {
+                            cluster.send("PUT", "/kv/hot" + k, "t" + threadId + "-r" + round);
+                        }
+                    }
+                    return null;
+                }));
+            }
+            start.countDown();
+            for (Future<?> future : futures) {
+                future.get();
+            }
+            pool.shutdown();
+
+            for (int k = 0; k < keys; k++) {
+                List<String> replicas = cluster.coordinator.replicasFor("hot" + k);
+                assertEquals(cluster.store(replicas.get(0)).get("hot" + k),
+                        cluster.store(replicas.get(1)).get("hot" + k),
+                        "replicas of hot" + k + " diverged");
             }
         }
     }
