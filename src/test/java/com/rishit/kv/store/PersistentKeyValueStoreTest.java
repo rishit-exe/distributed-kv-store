@@ -2,7 +2,9 @@ package com.rishit.kv.store;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -36,6 +38,37 @@ class PersistentKeyValueStoreTest {
     void deletingMissingKeyReturnsFalse() throws Exception {
         try (PersistentKeyValueStore store = new PersistentKeyValueStore(tempDir.resolve("kv.log"), false)) {
             assertFalse(store.delete("missing"));
+        }
+    }
+
+    @Test
+    void logIsCompactedWhenMostRecordsAreStale() throws Exception {
+        Path logFile = tempDir.resolve("kv.log");
+        try (PersistentKeyValueStore store = new PersistentKeyValueStore(logFile, false, 100)) {
+            for (int i = 0; i < 1_000; i++) {
+                store.put("counter", String.valueOf(i)); // same key overwritten 1000 times
+            }
+            store.put("other", "x");
+            store.delete("other");
+
+            assertTrue(store.logRecordCount() < 100, "log was not compacted: " + store.logRecordCount());
+            assertTrue(Files.size(logFile) < 5_000, "log file is still large: " + Files.size(logFile));
+        }
+
+        try (PersistentKeyValueStore restarted = new PersistentKeyValueStore(logFile, false, 100)) {
+            assertEquals(Optional.of("999"), restarted.get("counter"));
+            assertEquals(Optional.empty(), restarted.get("other"));
+            assertEquals(1, restarted.size());
+        }
+    }
+
+    @Test
+    void logIsNotCompactedWhileMostRecordsAreLive() throws Exception {
+        try (PersistentKeyValueStore store = new PersistentKeyValueStore(tempDir.resolve("kv.log"), false, 100)) {
+            for (int i = 0; i < 500; i++) {
+                store.put("key" + i, "v");
+            }
+            assertEquals(500, store.logRecordCount());
         }
     }
 

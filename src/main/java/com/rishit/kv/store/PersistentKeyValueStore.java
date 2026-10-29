@@ -23,18 +23,31 @@ import java.util.logging.Logger;
  * the order in which the map was updated. Without the lock, two writes to the
  * same key could reach the log in one order and the map in the other, and the
  * value after a restart would differ from the value before it.
+ *
+ * <p>Compaction: the log keeps every old value, so it grows forever. When it has
+ * more than twice as many records as live keys (and at least
+ * {@code compactionThreshold} records), it is rewritten with only the live data.
  */
 public class PersistentKeyValueStore implements KeyValueStore, Closeable {
 
     private static final Logger LOG = Logger.getLogger(PersistentKeyValueStore.class.getName());
+    public static final long DEFAULT_COMPACTION_THRESHOLD = 10_000;
 
     private final Map<String, String> data = new ConcurrentHashMap<>();
     private final WriteAheadLog log;
+    private final long compactionThreshold;
 
     public PersistentKeyValueStore(Path logFile, boolean syncOnWrite) throws IOException {
+        this(logFile, syncOnWrite, DEFAULT_COMPACTION_THRESHOLD);
+    }
+
+    public PersistentKeyValueStore(Path logFile, boolean syncOnWrite, long compactionThreshold)
+            throws IOException {
         this.log = new WriteAheadLog(logFile, syncOnWrite);
+        this.compactionThreshold = compactionThreshold;
         long records = log.replay(data);
         LOG.info("Recovered " + data.size() + " keys from " + records + " log records in " + logFile);
+        compactIfNeeded();
     }
 
     @Override
@@ -49,10 +62,11 @@ public class PersistentKeyValueStore implements KeyValueStore, Closeable {
         Objects.requireNonNull(value, "value");
         try {
             log.appendPut(key, value);
+            data.put(key, value);
+            compactIfNeeded();
         } catch (IOException e) {
             throw new UncheckedIOException("Could not write to log", e);
         }
-        data.put(key, value);
     }
 
     @Override
@@ -63,10 +77,11 @@ public class PersistentKeyValueStore implements KeyValueStore, Closeable {
         }
         try {
             log.appendDelete(key);
+            data.remove(key);
+            compactIfNeeded();
         } catch (IOException e) {
             throw new UncheckedIOException("Could not write to log", e);
         }
-        data.remove(key);
         return true;
     }
 
@@ -75,8 +90,22 @@ public class PersistentKeyValueStore implements KeyValueStore, Closeable {
         return data.size();
     }
 
+    /** Number of records in the log file (exposed for tests and monitoring). */
+    public long logRecordCount() {
+        return log.recordCount();
+    }
+
     @Override
     public synchronized void close() throws IOException {
         log.close();
+    }
+
+    /** Called while holding the lock, so no write can happen during compaction. */
+    private void compactIfNeeded() throws IOException {
+        long records = log.recordCount();
+        if (records >= compactionThreshold && records > 2L * data.size()) {
+            log.compact(data);
+            LOG.info("Compacted log from " + records + " to " + log.recordCount() + " records");
+        }
     }
 }

@@ -12,6 +12,7 @@ import java.io.RandomAccessFile;
 import java.io.Writer;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.Base64;
 import java.util.Map;
 import java.util.logging.Logger;
@@ -97,6 +98,34 @@ public class WriteAheadLog implements Closeable {
     /** Number of records currently in the log file. */
     public synchronized long recordCount() {
         return recordCount;
+    }
+
+    /**
+     * Replaces the log with one PUT record per live key, dropping overwritten
+     * values and deleted keys.
+     *
+     * <p>The new log is written to a temp file, synced to disk, and then renamed
+     * over the old one. A rename within one directory is atomic, so after a crash
+     * we have either the complete old log or the complete new log, never half of each.
+     *
+     * <p>The caller must make sure no writes happen during compaction.
+     */
+    public synchronized void compact(Map<String, String> liveData) throws IOException {
+        Path tempFile = path.resolveSibling(path.getFileName() + ".compact");
+        try (FileOutputStream out = new FileOutputStream(tempFile.toFile());
+             Writer tempWriter = new BufferedWriter(new OutputStreamWriter(out, UTF_8))) {
+            for (Map.Entry<String, String> entry : liveData.entrySet()) {
+                tempWriter.write(withChecksum("PUT " + encode(entry.getKey()) + " " + encode(entry.getValue())));
+                tempWriter.write('\n');
+            }
+            tempWriter.flush();
+            out.getFD().sync();
+        }
+
+        writer.close();
+        Files.move(tempFile, path, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        openForAppend();
+        recordCount = liveData.size();
     }
 
     @Override
