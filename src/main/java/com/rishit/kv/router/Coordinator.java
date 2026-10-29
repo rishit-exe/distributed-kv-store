@@ -15,11 +15,13 @@ import java.util.logging.Logger;
  *   <li>Every key is stored on {@code replicationFactor} nodes (N).</li>
  *   <li>A write is sent to all N replicas. It succeeds if at least
  *       {@code writeQuorum} (W) of them confirm it.</li>
- *   <li>A read goes to the first replica that answers, so one node being down
- *       does not make its keys unreadable.</li>
- *   <li>Nodes marked DOWN (see {@link HealthChecker}) are skipped instead of
- *       waiting for them to time out. A failed request marks the node DOWN
- *       right away.</li>
+ *   <li>A read goes to the first replica that is UP and answers.</li>
+ *   <li>Nodes that are not UP are skipped instead of waiting for them to time
+ *       out. A failed request marks the node DOWN right away.</li>
+ *   <li>Hinted handoff: a write that a replica could not receive is kept as a
+ *       "hint" on its {@link ClusterNode}. When the node is reachable again,
+ *       {@link #recover} replays the hints in order before the node is UP.
+ *       So a node that is UP has every write, and reads from it are not stale.</li>
  * </ul>
  */
 public class Coordinator {
@@ -74,51 +76,43 @@ public class Coordinator {
             try {
                 return client.get(node.address(), key);
             } catch (IOException e) {
-                node.markDown("read failed: " + e.getMessage());
+                node.markDown("read failed: " + describe(e));
             }
         }
         throw new ClusterUnavailableException("No replica of key '" + key + "' is reachable");
     }
 
-    /** Writes to every healthy replica. Returns how many replicas confirmed the write. */
+    /** Writes to every replica. Returns how many replicas confirmed the write. */
     public int put(String key, String value) throws ClusterUnavailableException {
-        int acks = 0;
-        synchronized (lockFor(key)) {
-            for (ClusterNode node : replicaNodes(key)) {
-                if (!node.isUp()) {
-                    continue;
-                }
-                try {
-                    client.put(node.address(), key, value);
-                    acks++;
-                } catch (IOException e) {
-                    node.markDown("write failed: " + e.getMessage());
-                }
-            }
-        }
-        requireQuorum(acks);
-        return acks;
+        return write(Write.put(key, value)).acks();
     }
 
-    /** Deletes from every healthy replica. Returns true if any replica had the key. */
+    /** Deletes from every replica. Returns true if any replica had the key. */
     public boolean delete(String key) throws ClusterUnavailableException {
-        int acks = 0;
-        boolean existed = false;
-        synchronized (lockFor(key)) {
-            for (ClusterNode node : replicaNodes(key)) {
-                if (!node.isUp()) {
-                    continue;
-                }
-                try {
-                    existed |= client.delete(node.address(), key);
-                    acks++;
-                } catch (IOException e) {
-                    node.markDown("delete failed: " + e.getMessage());
-                }
+        return write(Write.delete(key)).existed();
+    }
+
+    /**
+     * Replays the hints of a node that became reachable again, oldest first.
+     * New writes for the node keep being queued while this runs, and the node
+     * is marked UP only once the queue is empty. If a replay fails, the node
+     * goes back to DOWN and keeps the remaining hints for the next attempt.
+     */
+    public void recover(ClusterNode node) {
+        if (!node.startRecovery()) {
+            return;
+        }
+        LOG.info("Recovering " + node.address() + ", " + node.pendingHints() + " hints to replay");
+        Write hint;
+        while ((hint = node.nextHintToReplay()) != null) {
+            try {
+                send(node.address(), hint);
+                node.hintReplayed();
+            } catch (IOException e) {
+                node.markDown("hint replay failed: " + describe(e));
+                return;
             }
         }
-        requireQuorum(acks);
-        return existed;
     }
 
     public List<String> replicasFor(String key) {
@@ -145,6 +139,35 @@ public class Coordinator {
         return writeQuorum;
     }
 
+    private WriteResult write(Write write) throws ClusterUnavailableException {
+        int acks = 0;
+        boolean existed = false;
+        synchronized (lockFor(write.key())) {
+            for (ClusterNode node : replicaNodes(write.key())) {
+                if (node.queueIfNotUp(write)) {
+                    continue; // node is down or still catching up, it gets this write later
+                }
+                try {
+                    existed |= send(node.address(), write);
+                    acks++;
+                } catch (IOException e) {
+                    node.markDownAndQueue(write, "write failed: " + describe(e));
+                }
+            }
+        }
+        requireQuorum(acks);
+        return new WriteResult(acks, existed);
+    }
+
+    /** Sends one write to a node. Returns false only for a DELETE of a missing key. */
+    private boolean send(String address, Write write) throws IOException {
+        if (write.isDelete()) {
+            return client.delete(address, write.key());
+        }
+        client.put(address, write.key(), write.value());
+        return true;
+    }
+
     private List<ClusterNode> replicaNodes(String key) {
         return replicasFor(key).stream().map(members::get).toList();
     }
@@ -153,10 +176,23 @@ public class Coordinator {
         return writeLocks[Math.floorMod(key.hashCode(), LOCK_STRIPES)];
     }
 
+    /**
+     * Hints are kept even when the quorum is not reached, so the replicas still
+     * converge. The client gets an error and can retry. PUT and DELETE are
+     * idempotent, so a retry is safe.
+     */
     private void requireQuorum(int acks) throws ClusterUnavailableException {
         if (acks < writeQuorum) {
             throw new ClusterUnavailableException(
                     "Only " + acks + " of " + writeQuorum + " required replicas confirmed the write");
         }
+    }
+
+    /** Some exceptions (e.g. ConnectException) have no message, so fall back to the type. */
+    private static String describe(IOException e) {
+        return e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+    }
+
+    private record WriteResult(int acks, boolean existed) {
     }
 }

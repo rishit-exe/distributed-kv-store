@@ -9,7 +9,8 @@ import java.util.logging.Logger;
 
 /**
  * Failure detector: every {@code interval} it calls GET /health on each node
- * and updates the node's status (heartbeat-style failure detection).
+ * and updates the node's status (heartbeat-style failure detection). When a
+ * DOWN node answers again, it starts the node's recovery (hint replay).
  */
 public class HealthChecker {
 
@@ -44,7 +45,10 @@ public class HealthChecker {
         // Catch everything so one bad round does not stop failure detection.
         try {
             for (ClusterNode node : coordinator.members()) {
-                node.recordHealthCheck(client.isHealthy(node.address()), failureThreshold);
+                boolean needsRecovery = node.recordHealthCheck(client.isHealthy(node.address()), failureThreshold);
+                if (needsRecovery) {
+                    coordinator.recover(node);
+                }
             }
         } catch (RuntimeException e) {
             LOG.log(Level.WARNING, "Health check round failed", e);
