@@ -4,6 +4,7 @@ import com.rishit.kv.common.Env;
 import com.rishit.kv.node.NodeServer;
 import com.rishit.kv.router.ConsistentHashRing;
 import com.rishit.kv.router.Coordinator;
+import com.rishit.kv.router.HealthChecker;
 import com.rishit.kv.router.NodeClient;
 import com.rishit.kv.router.RouterServer;
 import com.rishit.kv.store.PersistentKeyValueStore;
@@ -77,9 +78,17 @@ public final class Main {
         ConsistentHashRing ring = new ConsistentHashRing(Env.getInt("VIRTUAL_NODES", 100));
         nodes.forEach(ring::addNode);
 
-        Coordinator coordinator = new Coordinator(ring, new NodeClient(timeout), replicationFactor, writeQuorum);
+        NodeClient client = new NodeClient(timeout);
+        Coordinator coordinator = new Coordinator(ring, client, replicationFactor, writeQuorum);
+
+        HealthChecker healthChecker = new HealthChecker(coordinator, client, Env.getInt("FAILURE_THRESHOLD", 3));
+        healthChecker.start(Duration.ofMillis(Env.getInt("HEALTH_CHECK_INTERVAL_MS", 1000)));
+
         RouterServer server = new RouterServer(port, coordinator, threads);
-        Runtime.getRuntime().addShutdownHook(new Thread(server::stop));
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            healthChecker.stop();
+            server.stop();
+        }));
         server.start();
     }
 
