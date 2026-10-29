@@ -7,7 +7,6 @@ import com.rishit.kv.store.KeyValueStore;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
-import java.net.InetSocketAddress;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -39,7 +38,7 @@ public class NodeServer {
      */
     public NodeServer(int port, KeyValueStore store, int threads) throws IOException {
         this.store = store;
-        this.server = HttpServer.create(new InetSocketAddress(port), 0);
+        this.server = HttpUtils.createServer(port);
         this.workers = Executors.newFixedThreadPool(threads);
         server.setExecutor(workers);
         server.createContext(KV_PREFIX, HttpUtils.withErrorHandling(this::handleKv));
