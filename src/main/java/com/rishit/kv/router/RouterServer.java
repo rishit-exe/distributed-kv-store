@@ -44,7 +44,9 @@ public class RouterServer {
 
     public void start() {
         server.start();
-        LOG.info("Router listening on port " + getPort() + ", nodes: " + coordinator.nodes());
+        LOG.info("Router listening on port " + getPort() + ", nodes: " + coordinator.nodes()
+                + ", replication factor: " + coordinator.replicationFactor()
+                + ", write quorum: " + coordinator.writeQuorum());
     }
 
     public void stop() {
@@ -74,7 +76,8 @@ public class RouterServer {
                     }
                 }
                 case "PUT" -> {
-                    coordinator.put(key, HttpUtils.readBody(exchange));
+                    int acks = coordinator.put(key, HttpUtils.readBody(exchange));
+                    exchange.getResponseHeaders().set("X-Replicas-Acked", String.valueOf(acks));
                     sendText(exchange, 200, "OK\n");
                 }
                 case "DELETE" -> {
@@ -89,11 +92,9 @@ public class RouterServer {
                     sendText(exchange, 405, "Method not allowed\n");
                 }
             }
-        } catch (HttpUtils.BodyTooLargeException e) {
-            throw e;
-        } catch (IOException e) {
+        } catch (ClusterUnavailableException e) {
             LOG.warning("Request for key " + key + " failed: " + e.getMessage());
-            sendText(exchange, 503, "Storage node unavailable\n");
+            sendText(exchange, 503, e.getMessage() + "\n");
         }
     }
 }
