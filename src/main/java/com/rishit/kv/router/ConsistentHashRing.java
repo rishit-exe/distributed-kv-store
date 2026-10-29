@@ -5,6 +5,8 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import java.nio.ByteBuffer;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -68,6 +70,37 @@ public class ConsistentHashRing {
             entry = ring.firstEntry(); // past the last point, wrap around to the start
         }
         return entry.getValue();
+    }
+
+    /**
+     * Returns up to {@code count} distinct physical nodes for the key, walking
+     * clockwise from hash(key). The first one is the primary owner and the
+     * rest hold the replicas. Virtual nodes of a node that is already in the
+     * list are skipped, so two copies never land on the same machine.
+     */
+    public synchronized List<String> nodesFor(String key, int count) {
+        if (ring.isEmpty()) {
+            throw new IllegalStateException("No nodes in the ring");
+        }
+        int wanted = Math.min(count, nodes.size());
+        List<String> result = new ArrayList<>(wanted);
+        long hash = hash(key);
+
+        // Clockwise from the key to the end of the ring, then wrap around from the start.
+        addDistinct(result, ring.tailMap(hash, true).values(), wanted);
+        addDistinct(result, ring.headMap(hash, false).values(), wanted);
+        return result;
+    }
+
+    private static void addDistinct(List<String> result, Collection<String> candidates, int wanted) {
+        for (String node : candidates) {
+            if (result.size() == wanted) {
+                return;
+            }
+            if (!result.contains(node)) {
+                result.add(node);
+            }
+        }
     }
 
     public synchronized List<String> nodes() {
