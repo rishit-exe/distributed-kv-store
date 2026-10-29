@@ -56,6 +56,16 @@ public class NodeClient {
         };
     }
 
+    /** Returns the node's /stats JSON, or empty if the node did not answer. */
+    public Optional<String> stats(String node) {
+        try {
+            HttpResponse<String> response = send(request(node, "/stats").GET());
+            return response.statusCode() == 200 ? Optional.of(response.body()) : Optional.empty();
+        } catch (IOException e) {
+            return Optional.empty();
+        }
+    }
+
     /** True if the node answered its health endpoint in time. */
     public boolean isHealthy(String node) {
         try {

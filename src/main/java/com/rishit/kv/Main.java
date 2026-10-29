@@ -87,7 +87,7 @@ public final class Main {
         HealthChecker healthChecker = new HealthChecker(coordinator, client, Env.getInt("FAILURE_THRESHOLD", 3));
         healthChecker.start(Duration.ofMillis(Env.getInt("HEALTH_CHECK_INTERVAL_MS", 1000)));
 
-        RouterServer server = new RouterServer(port, coordinator, threads);
+        RouterServer server = new RouterServer(port, coordinator, client, threads);
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             healthChecker.stop();
             server.stop();
