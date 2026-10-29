@@ -36,8 +36,9 @@ public final class Main {
 
     private static void startNode() throws IOException {
         int port = Env.getInt("PORT", 8081);
+        int threads = Env.getInt("THREADS", 16);
 
-        NodeServer server = new NodeServer(port, new InMemoryKeyValueStore());
+        NodeServer server = new NodeServer(port, new InMemoryKeyValueStore(), threads);
         Runtime.getRuntime().addShutdownHook(new Thread(server::stop));
         server.start();
     }

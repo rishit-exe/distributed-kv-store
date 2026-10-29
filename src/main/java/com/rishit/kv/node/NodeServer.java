@@ -9,6 +9,8 @@ import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.Optional;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.logging.Logger;
 
 /**
@@ -28,10 +30,18 @@ public class NodeServer {
 
     private final KeyValueStore store;
     private final HttpServer server;
+    private final ExecutorService workers;
 
-    public NodeServer(int port, KeyValueStore store) throws IOException {
+    /**
+     * @param threads number of worker threads. Without an executor, HttpServer
+     *                handles every request on its single dispatcher thread, so
+     *                one slow request would block all the others.
+     */
+    public NodeServer(int port, KeyValueStore store, int threads) throws IOException {
         this.store = store;
         this.server = HttpServer.create(new InetSocketAddress(port), 0);
+        this.workers = Executors.newFixedThreadPool(threads);
+        server.setExecutor(workers);
         server.createContext(KV_PREFIX, HttpUtils.withErrorHandling(this::handleKv));
         server.createContext("/health", HttpUtils.withErrorHandling(this::handleHealth));
     }
@@ -43,6 +53,7 @@ public class NodeServer {
 
     public void stop() {
         server.stop(0);
+        workers.shutdown();
     }
 
     /** Actual port (useful when the server was created with port 0 in tests). */
