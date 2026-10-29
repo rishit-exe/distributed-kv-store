@@ -2,8 +2,9 @@ package com.rishit.kv;
 
 import com.rishit.kv.common.Env;
 import com.rishit.kv.node.NodeServer;
-import com.rishit.kv.store.InMemoryKeyValueStore;
+import com.rishit.kv.store.PersistentKeyValueStore;
 import java.io.IOException;
+import java.nio.file.Path;
 
 /**
  * Entry point. The same jar runs every role:
@@ -37,9 +38,19 @@ public final class Main {
     private static void startNode() throws IOException {
         int port = Env.getInt("PORT", 8081);
         int threads = Env.getInt("THREADS", 16);
+        Path dataDir = Path.of(Env.get("DATA_DIR", "data/node-" + port));
+        boolean fsync = Env.getBoolean("FSYNC", false);
 
-        NodeServer server = new NodeServer(port, new InMemoryKeyValueStore(), threads);
-        Runtime.getRuntime().addShutdownHook(new Thread(server::stop));
+        PersistentKeyValueStore store = new PersistentKeyValueStore(dataDir.resolve("kv.log"), fsync);
+        NodeServer server = new NodeServer(port, store, threads);
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            server.stop();
+            try {
+                store.close();
+            } catch (IOException ignored) {
+                // shutting down anyway
+            }
+        }));
         server.start();
     }
 }
