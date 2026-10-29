@@ -19,9 +19,13 @@ import java.util.Map;
  */
 class TestCluster implements AutoCloseable {
 
+    static final int FAILURE_THRESHOLD = 3;
+
     final ConsistentHashRing ring = new ConsistentHashRing(100);
     final Coordinator coordinator;
     final RouterServer router;
+    /** Not started on a timer. Tests call checkAll() to run one round on demand. */
+    final HealthChecker healthChecker;
 
     private final Map<String, NodeServer> nodes = new LinkedHashMap<>();
     private final Map<String, InMemoryKeyValueStore> stores = new LinkedHashMap<>();
@@ -39,8 +43,9 @@ class TestCluster implements AutoCloseable {
             stores.put(address, store);
             ring.addNode(address);
         }
-        coordinator = new Coordinator(ring, new NodeClient(Duration.ofMillis(500)),
-                replicationFactor, writeQuorum);
+        NodeClient client = new NodeClient(Duration.ofMillis(500));
+        coordinator = new Coordinator(ring, client, replicationFactor, writeQuorum);
+        healthChecker = new HealthChecker(coordinator, client, FAILURE_THRESHOLD);
         router = new RouterServer(0, coordinator, 8);
         router.start();
     }
